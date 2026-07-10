@@ -7,24 +7,42 @@ Pipeline stages:
 3. EMBED  - convert chunks into vectors using a local sentence-transformer
 4. STORE  - persist vectors in a local ChromaDB collection
 5. RETRIEVE - given a user query, find the most relevant chunks
-6. GENERATE - feed retrieved chunks + query into a local LLM (via Ollama)
+6. GENERATE - feed retrieved chunks + query into an LLM via the Groq API
 """
 
 import os
 import glob
 import chromadb
 from chromadb.utils import embedding_functions
-import ollama
+from groq import Groq
 
 # ---------- CONFIG ----------
 DATA_DIR = "data/sample_docs"
 DB_DIR = "vectorstore"
 COLLECTION_NAME = "college_helpdesk"
-EMBED_MODEL = "all-MiniLM-L6-v2"   # small, fast, runs locally on CPU
-LLM_MODEL = "llama3.2:1b"             # change to any model you've pulled via `ollama pull <model>`
-CHUNK_SIZE = 500                   # characters per chunk
-CHUNK_OVERLAP = 80                 # overlap between consecutive chunks
-TOP_K = 3                          # number of chunks to retrieve per query
+EMBED_MODEL = "all-MiniLM-L6-v2"       # small, fast, runs locally on CPU
+LLM_MODEL = "llama-3.1-8b-instant"     # fast free Groq model; try "llama-3.3-70b-versatile" for higher quality
+CHUNK_SIZE = 500                       # characters per chunk
+CHUNK_OVERLAP = 80                     # overlap between consecutive chunks
+TOP_K = 3                              # number of chunks to retrieve per query
+
+
+def get_groq_client():
+    """Create a Groq client using an API key from environment variable or
+    Streamlit secrets (works both locally and on Streamlit Community Cloud)."""
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        try:
+            import streamlit as st
+            api_key = st.secrets["GROQ_API_KEY"]
+        except Exception:
+            pass
+    if not api_key:
+        raise ValueError(
+            "GROQ_API_KEY not found. Set it as an environment variable, "
+            "or add it to .streamlit/secrets.toml (local) / app Secrets (Streamlit Cloud)."
+        )
+    return Groq(api_key=api_key)
 
 
 def load_documents(data_dir: str = DATA_DIR):
@@ -51,7 +69,8 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
 
 def get_chroma_collection():
     """Initialize (or load) a persistent local Chroma collection using a
-    local sentence-transformer embedding function -- no API key required."""
+    local sentence-transformer embedding function -- no API key required
+    for embeddings, they run on-device."""
     client = chromadb.PersistentClient(path=DB_DIR)
     embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=EMBED_MODEL)
     collection = client.get_or_create_collection(name=COLLECTION_NAME, embedding_function=embed_fn)
@@ -97,13 +116,14 @@ def retrieve(query: str, top_k: int = TOP_K):
 
 
 def generate_answer(query: str, retrieved_chunks):
-    """Build a grounded prompt from retrieved chunks and call a local LLM via Ollama."""
+    """Build a grounded prompt from retrieved chunks and call the Groq API."""
     context = "\n\n".join([f"[Source: {src}]\n{chunk}" for chunk, src in retrieved_chunks])
 
     prompt = f"""You are a helpful college helpdesk assistant. Answer the student's
 question using ONLY the context provided below. If the answer isn't in the
 context, say you don't have that information and suggest they contact the
 academic office directly. Keep answers concise and clear.
+Respond in the same language the student used to ask the question (English or Hindi).
 
 CONTEXT:
 {context}
@@ -113,11 +133,14 @@ QUESTION:
 
 ANSWER:"""
 
-    response = ollama.chat(
+    client = get_groq_client()
+    response = client.chat.completions.create(
         model=LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=500,
     )
-    return response["message"]["content"]
+    return response.choices[0].message.content
 
 
 def ask(query: str, top_k: int = TOP_K):
