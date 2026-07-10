@@ -68,11 +68,12 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
 
 
 def get_chroma_collection():
-    """Initialize (or load) a persistent local Chroma collection using a
-    local sentence-transformer embedding function -- no API key required
-    for embeddings, they run on-device."""
+    """Initialize (or load) a persistent local Chroma collection using
+    ChromaDB's built-in lightweight embedding function (ONNX-based,
+    no PyTorch required) -- fast and works well on resource-limited
+    cloud environments like Streamlit Community Cloud."""
     client = chromadb.PersistentClient(path=DB_DIR)
-    embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=EMBED_MODEL)
+    embed_fn = embedding_functions.DefaultEmbeddingFunction()
     collection = client.get_or_create_collection(name=COLLECTION_NAME, embedding_function=embed_fn)
     return collection
 

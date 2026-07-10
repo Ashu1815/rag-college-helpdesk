@@ -1,5 +1,5 @@
 streamlit==1.38.0
 chromadb==0.5.5
-sentence-transformers==3.0.1
 groq==0.11.0
 pypdf==4.3.1
+onnxruntime==1.19.2
